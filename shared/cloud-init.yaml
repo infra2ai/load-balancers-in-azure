@@ -1,0 +1,53 @@
+#cloud-config
+# Installs and starts the demo website on first boot. Nothing is downloaded, so
+# the VM needs no outbound internet access. The two placeholders are filled in
+# by shared/bicep/web-vm.bicep (the site's Python file and its settings, both
+# base64 encoded so no character can break the YAML).
+write_files:
+  - path: /opt/lbdemo/app.py
+    encoding: b64
+    permissions: '0644'
+    content: __APP_B64__
+  - path: /etc/lbdemo.env
+    encoding: b64
+    permissions: '0644'
+    content: __ENV_B64__
+  - path: /usr/local/bin/lbdemo-floating-ip
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # Floating IP (direct server return) needs the load balancer's frontend IP on the
+      # VM itself, on the loopback interface. For the Floating IP part of video 1:
+      #   sudo lbdemo-floating-ip add 20.1.2.3
+      #   sudo lbdemo-floating-ip remove 20.1.2.3
+      case "$1" in
+        add)    ip addr add "$2/32" dev lo ;;
+        remove) ip addr del "$2/32" dev lo ;;
+        *)      echo "usage: sudo lbdemo-floating-ip add|remove FRONTEND_IP"; exit 1 ;;
+      esac
+      ip -4 addr show lo | grep inet
+  - path: /etc/systemd/system/lbdemo.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Load Balancers in Azure demo website
+      After=network.target
+
+      [Service]
+      EnvironmentFile=/etc/lbdemo.env
+      ExecStart=/usr/bin/python3 /opt/lbdemo/app.py
+      DynamicUser=yes
+      AmbientCapabilities=CAP_NET_BIND_SERVICE
+      CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+      NoNewPrivileges=yes
+      ProtectSystem=strict
+      ProtectHome=yes
+      PrivateTmp=yes
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now lbdemo.service
